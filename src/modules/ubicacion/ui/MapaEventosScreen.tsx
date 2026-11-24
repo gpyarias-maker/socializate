@@ -2,9 +2,7 @@ import { useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  KeyboardAvoidingView,
   Linking,
-  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -12,7 +10,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import MapView, { MapPressEvent, Marker } from 'react-native-maps';
+import MapView, { Marker, PoiClickEvent, Region } from 'react-native-maps';
 import { QUITO_INITIAL_REGION } from '../../../core/constants/quito.constants';
 import { COLORS } from '../../../shared/theme/colors';
 import { EventoQuito, useEventos } from '../hooks/useEventos';
@@ -38,6 +36,10 @@ export const MapaEventosScreen = () => {
   const [lugarForm, setLugarForm] = useState('');
   const [descripcionForm, setDescripcionForm] = useState('');
   const [enlaceForm, setEnlaceForm] = useState('');
+  const [centroMapa, setCentroMapa] = useState<{ latitude: number; longitude: number }>({
+    latitude: QUITO_INITIAL_REGION.latitude,
+    longitude: QUITO_INITIAL_REGION.longitude,
+  });
   const [coordPin, setCoordPin] = useState<{ latitude: number; longitude: number }>({
     latitude: QUITO_INITIAL_REGION.latitude,
     longitude: QUITO_INITIAL_REGION.longitude,
@@ -64,8 +66,8 @@ export const MapaEventosScreen = () => {
     setDescripcionForm('');
     setEnlaceForm('');
     setCoordPin({
-      latitude: seleccionado?.latitud ?? QUITO_INITIAL_REGION.latitude,
-      longitude: seleccionado?.longitud ?? QUITO_INITIAL_REGION.longitude,
+      latitude: centroMapa.latitude,
+      longitude: centroMapa.longitude,
     });
     setModoFormulario('crear');
   };
@@ -88,13 +90,38 @@ export const MapaEventosScreen = () => {
     setEventoEditandoId(null);
   };
 
-  const manejarToqueMapa = (e: MapPressEvent) => {
-    const { coordinate } = e.nativeEvent;
+  const fijarCoordenada = (coordinate: { latitude: number; longitude: number }) => {
+    setCoordPin({
+      latitude: coordinate.latitude,
+      longitude: coordinate.longitude,
+    });
+  };
+
+  const manejarToqueMapa = (e: any) => {
+    const coord = e.nativeEvent?.coordinate;
+    if (!coord) return;
     if (modoFormulario) {
-      setCoordPin(coordinate);
+      fijarCoordenada(coord);
     } else if (seleccionado) {
       setSeleccionado(null);
     }
+  };
+
+  const manejarToquePoi = (e: PoiClickEvent) => {
+    const { coordinate, name } = e.nativeEvent;
+    if (modoFormulario && coordinate) {
+      fijarCoordenada(coordinate);
+      if (!lugarForm.trim() && name) {
+        setLugarForm(name.replace(/\n/g, ' '));
+      }
+    }
+  };
+
+  const manejarCambioRegion = (region: Region) => {
+    setCentroMapa({
+      latitude: region.latitude,
+      longitude: region.longitude,
+    });
   };
 
   const guardarFormulario = async () => {
@@ -155,17 +182,19 @@ export const MapaEventosScreen = () => {
         <ActivityIndicator size="large" color={COLORS.primary} />
       </View>
     );
-  }return (
-    <KeyboardAvoidingView
-      style={styles.contenedor}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+  }
+
+  return (
+    <View style={styles.contenedor}>
       <MapView
         ref={mapRef}
         style={styles.mapa}
         initialRegion={QUITO_INITIAL_REGION}
         showsUserLocation
         onPress={manejarToqueMapa}
+        onLongPress={manejarToqueMapa}
+        onPoiClick={manejarToquePoi}
+        onRegionChangeComplete={manejarCambioRegion}
       >
         {!modoFormulario &&
           eventos.map((ev) => {
@@ -190,14 +219,20 @@ export const MapaEventosScreen = () => {
             coordinate={coordPin}
             draggable
             pinColor={COLORS.primary}
-            title="Ubicación del evento"
-            description="Toca el mapa o arrastra el pin"
-            onDragEnd={(e) => setCoordPin(e.nativeEvent.coordinate)}
+            title="Punto seleccionado"
+            description="Arrastra o toca otro lugar del mapa"
+            onDragEnd={(e) => fijarCoordenada(e.nativeEvent.coordinate)}
           />
         )}
       </MapView>
 
-      <View style={styles.barraSuperior}>
+      {modoFormulario && (
+        <View pointerEvents="none" style={styles.miraCentro}>
+          <Text style={styles.textoMira}>+</Text>
+        </View>
+      )}
+
+      <View pointerEvents="box-none" style={styles.barraSuperior}>
         <View style={styles.pillContador}>
           <Text style={styles.textoPill}>📍 {eventos.length} eventos en Quito</Text>
         </View>
@@ -269,10 +304,17 @@ export const MapaEventosScreen = () => {
             </TouchableOpacity>
           </View>
 
-          <Text style={styles.ayudaMapa}>
-            👆 Toca cualquier punto en el mapa o arrastra el pin ({coordPin.latitude.toFixed(4)},{' '}
-            {coordPin.longitude.toFixed(4)})
-          </Text>
+          <View style={styles.filaCoord}>
+            <Text style={styles.ayudaMapa}>
+              📍 {coordPin.latitude.toFixed(5)}, {coordPin.longitude.toFixed(5)}
+            </Text>
+            <TouchableOpacity
+              style={styles.btnUsarCentro}
+              onPress={() => fijarCoordenada(centroMapa)}
+            >
+              <Text style={styles.textoUsarCentro}>🎯 Fijar centro</Text>
+            </TouchableOpacity>
+          </View>
 
           <ScrollView style={styles.scrollForm} keyboardShouldPersistTaps="handled">
             <TextInput
@@ -321,7 +363,7 @@ export const MapaEventosScreen = () => {
           </TouchableOpacity>
         </View>
       )}
-    </KeyboardAvoidingView>
+    </View>
   );
 };
 
@@ -334,6 +376,24 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   mapa: { flex: 1 },
+  miraCentro: {
+    position: 'absolute',
+    top: '32%',
+    alignSelf: 'center',
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    borderWidth: 2,
+    borderColor: COLORS.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  textoMira: {
+    color: COLORS.primary,
+    fontSize: 18,
+    fontWeight: 'bold',
+    lineHeight: 20,
+  },
   barraSuperior: {
     position: 'absolute',
     top: 48,
@@ -428,7 +488,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     borderColor: COLORS.primary,
-    maxHeight: '55%',
+    maxHeight: '52%',
   },
   headerForm: {
     flexDirection: 'row',
@@ -437,14 +497,29 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   tituloForm: { color: COLORS.primary, fontSize: 16, fontWeight: 'bold' },
-  ayudaMapa: { color: COLORS.textSecondary, fontSize: 11.5, marginBottom: 10 },
-  scrollForm: { maxHeight: 190 },
+  filaCoord: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  ayudaMapa: { color: COLORS.textSecondary, fontSize: 11.5 },
+  btnUsarCentro: {
+    backgroundColor: COLORS.background,
+    borderWidth: 1,
+    borderColor: COLORS.primary,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  textoUsarCentro: { color: COLORS.primary, fontSize: 11, fontWeight: 'bold' },
+  scrollForm: { maxHeight: 165 },
   input: {
     backgroundColor: COLORS.background,
     color: COLORS.text,
     borderRadius: 10,
     paddingHorizontal: 12,
-    paddingVertical: 9,
+    paddingVertical: 8,
     borderWidth: 1,
     borderColor: COLORS.primary,
     marginBottom: 8,
@@ -452,7 +527,7 @@ const styles = StyleSheet.create({
   },
   botonGuardar: {
     backgroundColor: COLORS.primary,
-    padding: 12,
+    padding: 11,
     borderRadius: 10,
     alignItems: 'center',
     marginTop: 4,
